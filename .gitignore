@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+coverage/
+scratch/
+scratch_*.py
+.system_generated/
+b1_*.png
+s1_*.png
+s2_*.png
+ref_top*.png

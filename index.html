@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      try {
+        const meta = document.querySelector('meta[name="color-scheme"]');
+        const stored = localStorage.getItem("color-scheme");
+        if (meta) {
+          meta.content = stored === "light" || stored === "dark" ? stored : "light dark";
+        }
+        document.documentElement.dataset.theme = stored === "light" || stored === "dark" ? stored : "system";
+      } catch (err) {}
+    </script>
+    <meta
+      name="description"
+      content="Veloura — The art-directed freelance marketplace for high-trust product engineering, design, and AI collaborations."
+    />
+    <title>VELOURA — Your Next Great Collaboration Starts Here</title>
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800;900&family=DM+Serif+Display:ital@0;1&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/client/main.tsx"></script>
+  </body>
+</html>
