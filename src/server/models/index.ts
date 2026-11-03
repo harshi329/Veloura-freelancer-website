@@ -58,6 +58,7 @@ export interface IUser extends Document {
   completedProjects: number;
   completionRate: number;
   verified: boolean;
+  emailVerified: boolean;
   portfolio: PortfolioItem[];
   savedProjects: string[];
   savedFreelancers: string[];
@@ -149,6 +150,7 @@ const UserSchema = new Schema<IUser>(
     completedProjects: { type: Number, default: 0 },
     completionRate: { type: Number, default: 100 },
     verified: { type: Boolean, default: true },
+    emailVerified: { type: Boolean, default: false },
     portfolio: { type: [PortfolioItemSchema], default: [] },
     savedProjects: { type: [String], default: [] },
     savedFreelancers: { type: [String], default: [] },
@@ -268,6 +270,10 @@ export interface IContract extends Document {
   status: ContractStatus;
   deliverableSummary?: string;
   deliverableUrl?: string;
+  revisionNotes?: string;
+  disputeReason?: string;
+  rejectionReason?: string;
+  cancelledAt?: Date;
   submittedAt?: Date;
   completedAt?: Date;
   milestones: MilestoneItem[];
@@ -286,11 +292,23 @@ const ContractSchema = new Schema<IContract>(
     estimatedDays: { type: Number, required: true },
     status: {
       type: String,
-      enum: ['active', 'submitted', 'completed', 'disputed'],
-      default: 'active',
+      enum: [
+        'pending_acceptance',
+        'active',
+        'submitted',
+        'in_revision',
+        'completed',
+        'disputed',
+        'cancelled',
+      ],
+      default: 'pending_acceptance',
     },
     deliverableSummary: { type: String },
     deliverableUrl: { type: String },
+    revisionNotes: { type: String },
+    disputeReason: { type: String },
+    rejectionReason: { type: String },
+    cancelledAt: { type: Date },
     submittedAt: { type: Date },
     completedAt: { type: Date },
     milestones: { type: [MilestoneSchema], default: [] },

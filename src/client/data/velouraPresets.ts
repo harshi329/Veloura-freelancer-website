@@ -16,7 +16,7 @@ export interface VelouraAvatarPreset {
   name: string;
   url: string;
   theme: 'light' | 'dark';
-  category: 'signature' | 'girls' | 'guys' | 'aesthetic';
+  category: 'signature' | 'girls' | 'guys' | 'aesthetic' | 'mascots';
   tag: string;
 }
 

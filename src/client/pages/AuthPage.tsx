@@ -60,12 +60,6 @@ export const AuthPage: React.FC = () => {
   const { apiFetch, setSession, showToast, user } = useApp();
   const navigate = useNavigate();
 
-  // If already authenticated, redirect directly to dashboard
-  useEffect(() => {
-    if (user) {
-      navigate('/dashboard', { replace: true });
-    }
-  }, [user, navigate]);
 
   // Live stats from platform
   const [stats, setStats] = useState({

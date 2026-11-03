@@ -1,26 +1,41 @@
+import 'dotenv/config';
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { User, type IUser } from '../models/index.js';
 import type { UserRole } from '../../shared/types.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'veloura-local-jwt-secret-key-2026-secure';
+const DEFAULT_INSECURE_SECRET = 'veloura-local-jwt-secret-key-2026-secure';
+
+export function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    if (!secret || secret === DEFAULT_INSECURE_SECRET || secret.length < 32) {
+      console.error(
+        '[FATAL SECURITY] In production, JWT_SECRET must be set to a secure, random string (min 32 characters).'
+      );
+      process.exit(1);
+    }
+    return secret;
+  }
+  return secret || DEFAULT_INSECURE_SECRET;
+}
 
 export interface AuthenticatedRequest extends Request {
   user?: IUser;
 }
 
 export function signToken(userId: string, role: UserRole): string {
-  return jwt.sign({ sub: userId, role }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ sub: userId, role }, getJwtSecret(), { expiresIn: '7d' });
 }
 
 /** Short-lived signed payloads (e.g. OAuth `state`) using the same server secret. */
 export function signShortLived(payload: Record<string, unknown>, expiresIn = '10m'): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn } as jwt.SignOptions);
+  return jwt.sign(payload, getJwtSecret(), { expiresIn } as jwt.SignOptions);
 }
 
 export function verifyShortLived<T>(token: string): T | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as T;
+    return jwt.verify(token, getJwtSecret()) as T;
   } catch {
     return null;
   }
@@ -48,7 +63,7 @@ export async function requireAuth(
       res.status(401).json({ error: 'Authentication required. Please sign in to continue.' });
       return;
     }
-    const decoded = jwt.verify(token, JWT_SECRET) as { sub: string; role: UserRole };
+    const decoded = jwt.verify(token, getJwtSecret()) as { sub: string; role: UserRole };
     const user = await User.findById(decoded.sub);
     if (!user) {
       res.status(401).json({ error: 'User session is no longer valid.' });
@@ -69,7 +84,7 @@ export async function optionalAuth(
   try {
     const token = extractToken(req);
     if (token) {
-      const decoded = jwt.verify(token, JWT_SECRET) as { sub: string; role: UserRole };
+      const decoded = jwt.verify(token, getJwtSecret()) as { sub: string; role: UserRole };
       const user = await User.findById(decoded.sub);
       if (user) {
         req.user = user;

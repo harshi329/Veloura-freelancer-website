@@ -22,6 +22,7 @@ interface AppContextValue {
   markAllNotificationsRead: () => Promise<void>;
   toggleBookmark: (projectId: string) => Promise<boolean>;
   isBookmarked: (projectId: string) => boolean;
+  switchRole: (targetRole?: 'client' | 'freelancer') => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -165,6 +166,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [apiFetch, showToast, user]
   );
 
+  const switchRole = useCallback(
+    async (targetRole?: 'client' | 'freelancer'): Promise<void> => {
+      try {
+        const res = await apiFetch<{
+          success: boolean;
+          message: string;
+          user: UserProfile;
+          token?: string;
+        }>('/api/auth/switch-role', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: targetRole }),
+        });
+
+        if (res.token) {
+          try {
+            localStorage.setItem('veloura_token', res.token);
+          } catch {}
+          setToken(res.token);
+        }
+        setUser(res.user);
+        showToast(
+          res.message ||
+            `Switched to ${res.user.role === 'client' ? 'Client' : 'Freelancer'} Workspace`,
+          'success'
+        );
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Failed to switch workspace mode', 'error');
+      }
+    },
+    [apiFetch, showToast]
+  );
+
   const logout = useCallback(async () => {
     try {
       await apiFetch('/api/auth/logout', { method: 'POST' });
@@ -195,6 +229,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         markAllNotificationsRead,
         toggleBookmark,
         isBookmarked,
+        switchRole,
         logout,
       }}
     >

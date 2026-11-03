@@ -5,13 +5,13 @@ dotenv.config();
 
 const DEFAULT_URI = 'mongodb://127.0.0.1:27017/veloura';
 
-export async function connectDB(customUri?: string): Promise<typeof mongoose> {
+export async function connectDB(customUri?: string, options?: mongoose.ConnectOptions): Promise<typeof mongoose> {
   const uri = customUri || process.env.MONGODB_URI || DEFAULT_URI;
   if (mongoose.connection.readyState === 1) {
     return mongoose;
   }
   mongoose.set('strictQuery', true);
-  return mongoose.connect(uri);
+  return mongoose.connect(uri, options);
 }
 
 export async function disconnectDB(): Promise<void> {

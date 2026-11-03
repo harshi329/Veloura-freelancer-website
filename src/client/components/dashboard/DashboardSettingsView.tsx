@@ -47,6 +47,7 @@ export const DashboardSettingsView: React.FC<DashboardSettingsViewProps> = ({
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [updatingPassword, setUpdatingPassword] = useState(false);
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,20 +92,35 @@ export const DashboardSettingsView: React.FC<DashboardSettingsViewProps> = ({
     }
   };
 
-  const handlePasswordUpdate = (e: React.FormEvent) => {
+  const handlePasswordUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentPassword) {
+      showToast('Please enter your current password.', 'error');
+      return;
+    }
     if (newPassword.length < 6) {
-      showToast('Password must be at least 6 characters.', 'error');
+      showToast('New password must be at least 6 characters.', 'error');
       return;
     }
     if (newPassword !== confirmPassword) {
       showToast('Passwords do not match.', 'error');
       return;
     }
-    showToast('Password updated securely!', 'success');
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
+    setUpdatingPassword(true);
+    try {
+      await apiFetch<{ success: boolean; message: string }>('/api/auth/password', {
+        method: 'PUT',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      showToast('Password updated securely!', 'success');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update password.', 'error');
+    } finally {
+      setUpdatingPassword(false);
+    }
   };
 
   return (

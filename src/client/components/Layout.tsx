@@ -17,6 +17,7 @@ import {
   Search,
   ChevronDown,
   Bookmark,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.js';
 import { BrandLogo } from './BrandLogo.js';
@@ -30,6 +31,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     dismissToast,
     markAllNotificationsRead,
     logout,
+    switchRole,
   } = useApp();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -83,8 +85,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     location.pathname.startsWith('/dashboard') ||
     location.pathname === '/auth' ||
     location.pathname.startsWith('/auth/') ||
+    location.pathname === '/login' ||
     location.pathname.startsWith('/reset-password') ||
-    (location.pathname === '/' && !user);
+    location.pathname === '/';
 
   if (isStandalonePortal) {
     return (
@@ -215,6 +218,21 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
             {/* Light / Dark / System Theme Selector */}
             <ThemeSelector />
+
+            {user && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const nextRole = user.role === 'client' ? 'freelancer' : 'client';
+                  await switchRole(nextRole);
+                }}
+                className="hidden md:inline-flex items-center gap-1.5 rounded-full border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-1.5 text-xs font-semibold text-[var(--brand-rose)] transition-all cursor-pointer shadow-2xs group"
+                title={`Switch role to ${user.role === 'client' ? 'Freelancer' : 'Client'}`}
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5 text-rose-500 transition-transform group-hover:rotate-180 duration-300" />
+                <span>Switch to {user.role === 'client' ? 'Specialist' : 'Client'}</span>
+              </button>
+            )}
 
             {user ? (
               <>
@@ -349,14 +367,25 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                         <span>Open My Workspace</span>
                       </Link>
 
-                      <Link
-                        to="/dashboard?tab=portfolio"
-                        onClick={() => setAccountMenuOpen(false)}
-                        className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
-                      >
-                        <User className="h-4 w-4 text-[var(--brand-rose)]" aria-hidden="true" />
-                        <span>Profile &amp; Portfolio</span>
-                      </Link>
+                      {user.role === 'freelancer' ? (
+                        <Link
+                          to="/dashboard?tab=portfolio"
+                          onClick={() => setAccountMenuOpen(false)}
+                          className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
+                        >
+                          <User className="h-4 w-4 text-[var(--brand-rose)]" aria-hidden="true" />
+                          <span>Profile &amp; Portfolio</span>
+                        </Link>
+                      ) : (
+                        <Link
+                          to="/dashboard?tab=settings"
+                          onClick={() => setAccountMenuOpen(false)}
+                          className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
+                        >
+                          <User className="h-4 w-4 text-[var(--brand-rose)]" aria-hidden="true" />
+                          <span>Account Settings</span>
+                        </Link>
+                      )}
 
                       <Link
                         to="/projects?bookmarked=1"
@@ -371,7 +400,24 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                         </span>
                       </Link>
 
-                      <div className="pt-1 border-t border-[var(--border-subtle)]">
+                      <div className="pt-1 border-t border-[var(--border-subtle)] space-y-1">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const nextRole = user.role === 'client' ? 'freelancer' : 'client';
+                            await switchRole(nextRole);
+                            setAccountMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-semibold text-[var(--brand-rose)] bg-rose-500/10 hover:bg-rose-500/20 cursor-pointer transition-colors"
+                        >
+                          <span className="flex items-center gap-2">
+                            <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span>Switch to {user.role === 'client' ? 'Specialist' : 'Client'}</span>
+                          </span>
+                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-rose-500/20">
+                            {user.role}
+                          </span>
+                        </button>
                         <button
                           type="button"
                           onClick={logout}
@@ -469,7 +515,8 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
               </form>
 
               {user && (
-                <div className="veloura-elevated p-3.5 flex items-center justify-between gap-3">
+                <div className="space-y-2">
+                  <div className="veloura-elevated p-3.5 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
                     {user.avatarUrl ? (
                       <img
@@ -492,6 +539,24 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                   <span className="rounded-full bg-rose-500/15 px-2.5 py-0.5 text-[11px] font-semibold uppercase text-[var(--brand-rose)] shrink-0">
                     {user.role}
                   </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const nextRole = user.role === 'client' ? 'freelancer' : 'client';
+                    await switchRole(nextRole);
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-semibold text-[var(--brand-rose)] bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />
+                    <span>Switch to {user.role === 'client' ? 'Specialist' : 'Client'} Mode</span>
+                  </span>
+                  <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-rose-500/20">
+                    {user.role}
+                  </span>
+                </button>
                 </div>
               )}
 
@@ -605,7 +670,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
               </p>
               <div className="inline-flex items-center gap-2 rounded-full bg-[var(--bg-elevated)] px-3 py-1 text-xs text-[var(--text-muted)]">
                 <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" />
-                <span>Backed by Local MongoDB Persistence &amp; Explainable Matching</span>
+                <span>Enterprise Escrow Protection &amp; Explainable Talent Matching</span>
               </div>
             </div>
 

@@ -91,7 +91,7 @@ export const DashboardPaymentsView: React.FC<DashboardPaymentsViewProps> = ({
     try {
       const dateStr = new Date().toISOString().slice(0, 10);
       const csvLines = [
-        'VELOURA FINANCIAL SETTLEMENT & ESCROW STATEMENT',
+        'VELOURA SIMULATED FINANCIAL & ESCROW STATEMENT (DEMO MODE)',
         `Account Holder,${user.name}`,
         `Role,${user.role}`,
         `Email,${user.email}`,
@@ -181,13 +181,13 @@ For support & reconciliation: support@veloura.io
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-rose-300/30 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-600 dark:text-rose-400 mb-2">
             <DollarSign className="h-3.5 w-3.5" />
-            <span>Escrow &amp; Financial Settlement Hub</span>
+            <span>Escrow &amp; Settlement Hub (Simulated Sandbox)</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)]">
             {isClient ? 'Billing & Escrow Payments' : 'Earnings & Milestone Payouts'}
           </h2>
           <p className="text-xs sm:text-sm text-[var(--text-muted)] mt-1">
-            All commissions are backed by automated multi-currency escrow vaults and verified release triggers.
+            <strong className="text-rose-500 font-semibold">[Demo Sandbox]</strong> Milestone escrow locking, deposit simulations, and settlement ledgers are modeled for platform demonstration without live fiat processing.
           </p>
         </div>
 
@@ -232,9 +232,9 @@ For support & reconciliation: support@veloura.io
           <p className="text-2xl sm:text-3xl font-extrabold text-[var(--text-primary)]">
             ${vaultBalance.toLocaleString()}
           </p>
-          <span className="text-[11px] text-emerald-500 font-semibold flex items-center gap-1">
+          <span className="text-[11px] text-amber-500 font-semibold flex items-center gap-1">
             <ShieldCheck className="h-3.5 w-3.5" />
-            <span>FDIC-Insured Custody</span>
+            <span>Simulated Escrow Sandbox</span>
           </span>
         </div>
 

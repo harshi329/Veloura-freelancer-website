@@ -60,7 +60,7 @@ export const DemoBadge: React.FC<{ show?: boolean }> = ({ show = true }) => {
   if (!show) return null;
   return (
     <span
-      title="Curated demonstration record stored in local MongoDB"
+      title="Curated demonstration record"
       className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
     >
       Demo Data

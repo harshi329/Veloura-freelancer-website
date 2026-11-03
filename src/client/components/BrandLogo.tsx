@@ -18,11 +18,11 @@ export const BrandCrest: React.FC<{
   className?: string;
 }> = ({ size = 'md', className = '' }) => {
   const dimMap = {
-    xs: 'w-6 h-6 rounded-lg',
-    sm: 'w-8 h-8 sm:w-9 sm:h-9 rounded-xl',
-    md: 'w-10 h-10 sm:w-11 sm:h-11 rounded-xl',
-    lg: 'w-14 h-14 sm:w-16 sm:h-16 rounded-2xl',
-    xl: 'w-20 h-20 sm:w-24 sm:h-24 rounded-3xl',
+    xs: 'w-6 h-6 rounded-full',
+    sm: 'w-8 h-8 sm:w-9 sm:h-9 rounded-full',
+    md: 'w-10 h-10 sm:w-11 sm:h-11 rounded-full',
+    lg: 'w-14 h-14 sm:w-16 sm:h-16 rounded-full',
+    xl: 'w-20 h-20 sm:w-24 sm:h-24 rounded-full',
   };
 
   return (
@@ -78,24 +78,24 @@ export const BrandWordmark: React.FC<{
 
   const titleGradient =
     variant === 'on-dark'
-      ? 'bg-gradient-to-r from-[#fff0f4] via-[#f9a8be] to-[#e87a9b] bg-clip-text text-transparent drop-shadow-[0_2px_10px_rgba(244,63,94,0.35)]'
+      ? 'veloura-wordmark-title-on-dark'
       : variant === 'on-light'
-      ? 'bg-gradient-to-r from-[#1c0d15] via-rose-900 to-[#1c0d15] bg-clip-text text-transparent drop-shadow-xs'
-      : 'bg-gradient-to-r from-[#1c0d15] via-rose-900 to-[#2e1320] dark:from-[#fff0f4] dark:via-[#f9a8be] dark:to-[#e87a9b] bg-clip-text text-transparent drop-shadow-xs dark:drop-shadow-[0_1px_8px_rgba(244,63,94,0.25)]';
+      ? 'veloura-wordmark-title-on-light'
+      : 'veloura-wordmark-title';
 
   const subGradient =
     variant === 'on-dark'
-      ? 'bg-gradient-to-r from-rose-400 via-pink-400 to-rose-300 bg-clip-text text-transparent'
+      ? 'veloura-wordmark-subtitle-on-dark'
       : variant === 'on-light'
-      ? 'bg-gradient-to-r from-rose-600 via-pink-600 to-rose-500 bg-clip-text text-transparent'
-      : 'bg-gradient-to-r from-rose-600 via-pink-600 to-rose-500 dark:from-rose-400 dark:via-pink-400 dark:to-rose-300 bg-clip-text text-transparent';
+      ? 'veloura-wordmark-subtitle-on-light'
+      : 'veloura-wordmark-subtitle';
 
   const diamondColor =
     variant === 'on-dark'
-      ? 'text-rose-200'
+      ? 'veloura-wordmark-diamond-on-dark'
       : variant === 'on-light'
-      ? 'text-rose-600'
-      : 'text-rose-600 dark:text-rose-200';
+      ? 'veloura-wordmark-diamond-on-light'
+      : 'veloura-wordmark-diamond';
 
   return (
     <div

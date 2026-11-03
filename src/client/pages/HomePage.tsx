@@ -373,7 +373,7 @@ export const HomePage: React.FC = () => {
                 ) : (
                   <div className="py-8 text-center text-sm text-[var(--text-muted)]">
                     {loading
-                      ? 'Calculating five-factor compatibility from MongoDB...'
+                      ? 'Calculating five-factor compatibility...'
                       : 'Explore open briefs to inspect live match scores.'}
                   </div>
                 )}

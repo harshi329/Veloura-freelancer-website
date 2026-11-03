@@ -65,7 +65,7 @@ export const NewProjectPage: React.FC = () => {
           milestones,
         }),
       });
-      showToast('Project brief published to MongoDB!', 'success');
+      showToast('Project brief published successfully!', 'success');
       navigate(`/projects/${res.project._id}`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to publish brief', 'error');

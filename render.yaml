@@ -17,3 +17,21 @@ services:
         generateValue: true
       - key: CLIENT_ORIGIN
         sync: false
+      - key: APP_URL
+        sync: false
+      - key: OAUTH_REDIRECT_BASE
+        sync: false
+      - key: SEED_DEMO_DATA
+        value: "false"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: "Veloura <onboarding@resend.dev>"
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false

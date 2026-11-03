@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Search,
   Star,
@@ -24,6 +24,7 @@ import {
   DemoBadge,
 } from '../components/Typography.js';
 import { ExplainableMatchCard } from '../components/ExplainableMatchCard.js';
+import { HireSpecialistModal } from '../components/HireSpecialistModal.js';
 
 interface ReviewRecord {
   _id: string;
@@ -52,9 +53,10 @@ const POPULAR_REQUIREMENTS = [
 ];
 
 export const FreelancersPage: React.FC = () => {
-  const { apiFetch } = useApp();
+  const { user, apiFetch, showToast } = useApp();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const highlightId = searchParams.get('highlight');
+  const highlightId = searchParams.get('highlight') || searchParams.get('id');
   const urlQuery = searchParams.get('q') || '';
 
   const [freelancers, setFreelancers] = useState<
@@ -67,17 +69,23 @@ export const FreelancersPage: React.FC = () => {
   const [experienceLevel, setExperienceLevel] = useState('all');
   const [loading, setLoading] = useState(true);
 
-  // Sync state if URL query param changes
-  useEffect(() => {
-    const currentUrlQ = searchParams.get('q') || '';
-    if (currentUrlQ !== q) {
-      setQ(currentUrlQ);
-    }
-  }, [searchParams]);
-
-  // Selected Freelancer Modal
+  // Selected Freelancer Modal & Direct Hiring
   const [activeFreelancer, setActiveFreelancer] = useState<UserProfile | null>(null);
   const [activeReviews, setActiveReviews] = useState<ReviewRecord[]>([]);
+  const [hiringSpecialist, setHiringSpecialist] = useState<UserProfile | null>(null);
+
+  const handleStartHire = (spec: UserProfile) => {
+    if (!user) {
+      showToast('Please sign in as a client to hire specialists.', 'info');
+      navigate('/auth?mode=login');
+      return;
+    }
+    if (user.role !== 'client' && user.role !== 'admin') {
+      showToast('Only client accounts can hire talent. Please sign in with a client account.', 'error');
+      return;
+    }
+    setHiringSpecialist(spec);
+  };
 
   useEffect(() => {
     apiFetch<{ projects: ProjectItem[] }>('/api/projects?status=open')
@@ -490,7 +498,7 @@ export const FreelancersPage: React.FC = () => {
                 )}
               </div>
 
-              <div className="pt-4 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2">
+              <div className="pt-4 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
                   <Clock className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" />
                   <span className="capitalize font-medium text-[var(--text-secondary)]">
@@ -499,13 +507,24 @@ export const FreelancersPage: React.FC = () => {
                   · {talent.yearsExperience} yrs exp · {talent.completionRate}% delivery
                 </span>
 
-                <button
-                  type="button"
-                  onClick={() => inspectFreelancer(talent._id)}
-                  className="rounded-full bg-[var(--bg-elevated)] px-4 py-2 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--brand-rose)] hover:text-white transition-colors cursor-pointer"
-                >
-                  Inspect Full Portfolio ({talent.portfolio?.length || 0})
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => inspectFreelancer(talent._id)}
+                    className="rounded-full bg-[var(--bg-elevated)] px-4 py-2 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--brand-rose)] hover:text-white transition-colors cursor-pointer"
+                  >
+                    Inspect Full Portfolio ({talent.portfolio?.length || 0})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleStartHire(talent)}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 px-4 py-2 text-xs font-bold text-white shadow-xs active:scale-95 transition-all cursor-pointer"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span>Hire Specialist</span>
+                  </button>
+                </div>
               </div>
             </article>
           ))}
@@ -560,14 +579,24 @@ export const FreelancersPage: React.FC = () => {
                   <p className="text-sm font-medium text-[var(--text-secondary)]">{activeFreelancer.title}</p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={closeInspect}
-                aria-label="Close portfolio"
-                className="rounded-lg p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
-              >
-                <X className="h-5 w-5" aria-hidden="true" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleStartHire(activeFreelancer)}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs active:scale-95 transition-all cursor-pointer"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  <span>Hire Specialist</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={closeInspect}
+                  aria-label="Close portfolio"
+                  className="rounded-lg p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
+                >
+                  <X className="h-5 w-5" aria-hidden="true" />
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-3 gap-3">
@@ -690,9 +719,42 @@ export const FreelancersPage: React.FC = () => {
                 ))
               )}
             </div>
+
+            {/* Modal Bottom Actions */}
+            <div className="pt-4 border-t border-[var(--border-subtle)] flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeInspect}
+                className="rounded-xl px-4 py-2 text-xs font-semibold text-[var(--text-muted)] hover:bg-[var(--bg-elevated)] transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => handleStartHire(activeFreelancer)}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 px-6 py-2.5 text-xs font-extrabold text-white shadow-md active:scale-95 transition-all cursor-pointer"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                <span>Hire Specialist Now</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/* Hire Specialist Modal */}
+      <HireSpecialistModal
+        freelancer={hiringSpecialist}
+        isOpen={Boolean(hiringSpecialist)}
+        onClose={() => setHiringSpecialist(null)}
+        clientProjects={openProjects}
+        apiFetch={apiFetch}
+        showToast={showToast}
+        onSuccess={() => {
+          setHiringSpecialist(null);
+          navigate('/dashboard?tab=contracts');
+        }}
+      />
     </div>
   );
 };

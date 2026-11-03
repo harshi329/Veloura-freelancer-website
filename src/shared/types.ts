@@ -73,6 +73,7 @@ export interface UserProfile {
   completedProjects: number;
   completionRate: number;
   verified: boolean;
+  emailVerified?: boolean;
   portfolio: PortfolioItem[];
   savedProjects?: string[];
   savedFreelancers?: string[];
@@ -149,7 +150,14 @@ export interface ProposalItem {
   createdAt: string;
 }
 
-export type ContractStatus = 'active' | 'submitted' | 'completed' | 'disputed';
+export type ContractStatus =
+  | 'pending_acceptance'
+  | 'active'
+  | 'submitted'
+  | 'in_revision'
+  | 'completed'
+  | 'disputed'
+  | 'cancelled';
 
 export interface ContractItem {
   _id: string;
@@ -162,6 +170,10 @@ export interface ContractItem {
   status: ContractStatus;
   deliverableSummary?: string;
   deliverableUrl?: string;
+  revisionNotes?: string;
+  disputeReason?: string;
+  rejectionReason?: string;
+  cancelledAt?: string;
   submittedAt?: string;
   completedAt?: string;
   milestones: MilestoneItem[];

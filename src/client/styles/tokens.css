@@ -414,6 +414,127 @@ progress.veloura-progress-ring::-moz-progress-bar {
   }
 }
 
+/* --- Couture Luxury Wordmark Typography --- */
+.veloura-wordmark-title {
+  background: linear-gradient(to right, #1c0d15 0%, #881337 50%, #2e1320 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.05));
+}
+
+:root.dark .veloura-wordmark-title,
+.dark .veloura-wordmark-title,
+:root[data-theme="dark"] .veloura-wordmark-title,
+:root:has(> head > meta[name="color-scheme"][content="dark"]) .veloura-wordmark-title {
+  background: linear-gradient(to right, #fff0f4 0%, #f9a8be 45%, #e87a9b 100%) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  filter: drop-shadow(0 2px 10px rgba(244, 63, 94, 0.35)) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(.light) .veloura-wordmark-title {
+    background: linear-gradient(to right, #fff0f4 0%, #f9a8be 45%, #e87a9b 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 2px 10px rgba(244, 63, 94, 0.35));
+  }
+}
+
+.veloura-wordmark-title-on-dark {
+  background: linear-gradient(to right, #fff0f4 0%, #f9a8be 45%, #e87a9b 100%) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  filter: drop-shadow(0 2px 10px rgba(244, 63, 94, 0.35)) !important;
+}
+
+.veloura-wordmark-title-on-light {
+  background: linear-gradient(to right, #1c0d15 0%, #881337 50%, #2e1320 100%) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.05)) !important;
+}
+
+.veloura-wordmark-subtitle {
+  background: linear-gradient(to right, #e11d48 0%, #db2777 50%, #f43f5e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+:root.dark .veloura-wordmark-subtitle,
+.dark .veloura-wordmark-subtitle,
+:root[data-theme="dark"] .veloura-wordmark-subtitle,
+:root:has(> head > meta[name="color-scheme"][content="dark"]) .veloura-wordmark-subtitle {
+  background: linear-gradient(to right, #fb7185 0%, #f472b6 50%, #fda4af 100%) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(.light) .veloura-wordmark-subtitle {
+    background: linear-gradient(to right, #fb7185 0%, #f472b6 50%, #fda4af 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+.veloura-wordmark-subtitle-on-dark {
+  background: linear-gradient(to right, #fb7185 0%, #f472b6 50%, #fda4af 100%) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+.veloura-wordmark-subtitle-on-light {
+  background: linear-gradient(to right, #e11d48 0%, #db2777 50%, #f43f5e 100%) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+.veloura-wordmark-diamond {
+  color: #e11d48;
+}
+
+:root.dark .veloura-wordmark-diamond,
+.dark .veloura-wordmark-diamond,
+:root[data-theme="dark"] .veloura-wordmark-diamond,
+:root:has(> head > meta[name="color-scheme"][content="dark"]) .veloura-wordmark-diamond {
+  color: #fecdd3 !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(.light) .veloura-wordmark-diamond {
+    color: #fecdd3;
+  }
+}
+
+.veloura-wordmark-diamond-on-dark {
+  color: #fecdd3 !important;
+}
+
+.veloura-wordmark-diamond-on-light {
+  color: #e11d48 !important;
+}
+
 /* --- Surfaces & Cards --- */
 .veloura-surface {
   background-color: var(--bg-surface);
@@ -499,6 +620,7 @@ progress.veloura-progress-ring::-moz-progress-bar {
 .animate-reveal-delay-2 {
   animation: velouraFadeUp var(--duration-slow) var(--ease-out-expo) 160ms both;
 }
+
 
 @media (prefers-reduced-motion: reduce) {
   *,

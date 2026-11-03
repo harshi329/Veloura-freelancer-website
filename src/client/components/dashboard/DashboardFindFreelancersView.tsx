@@ -18,12 +18,16 @@ import {
   SlidersHorizontal,
   X,
 } from 'lucide-react';
-import type { UserProfile, PortfolioItem } from '../../../shared/types.js';
+import type { UserProfile, PortfolioItem, ProjectItem } from '../../../shared/types.js';
+import { FreelancerPortfolioModal } from '../FreelancerPortfolioModal.js';
+import { HireSpecialistModal } from '../HireSpecialistModal.js';
 
 interface DashboardFindFreelancersViewProps {
   user: UserProfile;
   apiFetch: <T>(url: string, options?: RequestInit) => Promise<T>;
+  openProjects?: ProjectItem[];
   onOpenDirectChat?: (freelancerId: string) => void;
+  onContractCreated?: (contractId: string) => void;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -37,7 +41,9 @@ const ensureHttps = (url?: string): string => {
 export const DashboardFindFreelancersView: React.FC<DashboardFindFreelancersViewProps> = ({
   user,
   apiFetch,
+  openProjects = [],
   onOpenDirectChat,
+  onContractCreated,
   showToast,
 }) => {
   const [freelancers, setFreelancers] = useState<UserProfile[]>([]);
@@ -48,10 +54,8 @@ export const DashboardFindFreelancersView: React.FC<DashboardFindFreelancersView
   const [maxRate, setMaxRate] = useState<number>(300);
   const [onlyWithGithubPoc, setOnlyWithGithubPoc] = useState<boolean>(false);
   const [savedIds, setSavedIds] = useState<string[]>(user.savedFreelancers || []);
-  const [selectedPortfolioModal, setSelectedPortfolioModal] = useState<{
-    specialist: UserProfile;
-    project: PortfolioItem;
-  } | null>(null);
+  const [inspectingSpecialist, setInspectingSpecialist] = useState<UserProfile | null>(null);
+  const [hiringSpecialist, setHiringSpecialist] = useState<UserProfile | null>(null);
 
   // Debounce search input
   useEffect(() => {
@@ -502,35 +506,75 @@ export const DashboardFindFreelancersView: React.FC<DashboardFindFreelancersView
                 </div>
 
                 {/* Card Actions Footer */}
-                <div className="pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2">
-                  {onOpenDirectChat ? (
+                <div className="pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    {onOpenDirectChat && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenDirectChat(f._id)}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--bg-elevated)] px-3 py-1.5 text-xs font-bold text-[var(--text-primary)] hover:bg-rose-500 hover:text-white transition-colors cursor-pointer"
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        <span>Direct Message</span>
+                      </button>
+                    )}
+
                     <button
                       type="button"
-                      onClick={() => onOpenDirectChat(f._id)}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--bg-elevated)] px-3 py-1.5 text-xs font-bold text-[var(--text-primary)] hover:bg-rose-500 hover:text-white transition-colors cursor-pointer"
+                      onClick={() => setInspectingSpecialist(f)}
+                      className="inline-flex items-center gap-1 text-xs font-bold text-rose-500 hover:text-rose-600 transition-colors cursor-pointer"
                     >
-                      <MessageSquare className="h-3.5 w-3.5" />
-                      <span>Direct Message</span>
+                      <span>Inspect Full Portfolio</span>
+                      <ArrowRight className="h-3 w-3" />
                     </button>
-                  ) : (
-                    <span className="text-xs text-[var(--text-muted)] font-medium">
-                      {f.completedProjects || 10} deliverables completed
-                    </span>
-                  )}
+                  </div>
 
-                  <a
-                    href={`/freelancers?highlight=${f._id}`}
-                    className="inline-flex items-center gap-1 text-xs font-bold text-rose-500 hover:text-rose-600 transition-colors"
-                  >
-                    <span>Inspect Full Portfolio</span>
-                    <ArrowRight className="h-3 w-3" />
-                  </a>
+                  {user.role === 'client' && (
+                    <button
+                      type="button"
+                      onClick={() => setHiringSpecialist(f)}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs active:scale-95 transition-all cursor-pointer"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <span>Hire Specialist</span>
+                    </button>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
       )}
+
+      {/* Inspect Full Portfolio Dossier Modal */}
+      <FreelancerPortfolioModal
+        specialist={inspectingSpecialist}
+        isOpen={Boolean(inspectingSpecialist)}
+        onClose={() => setInspectingSpecialist(null)}
+        onHireClick={(spec) => {
+          setInspectingSpecialist(null);
+          setHiringSpecialist(spec);
+        }}
+        onMessageClick={onOpenDirectChat}
+        apiFetch={apiFetch}
+        isClientUser={user.role === 'client'}
+      />
+
+      {/* Direct Hire / Award Brief Modal */}
+      <HireSpecialistModal
+        freelancer={hiringSpecialist}
+        isOpen={Boolean(hiringSpecialist)}
+        onClose={() => setHiringSpecialist(null)}
+        clientProjects={openProjects}
+        apiFetch={apiFetch}
+        showToast={showToast}
+        onSuccess={(contractId) => {
+          setHiringSpecialist(null);
+          if (onContractCreated) {
+            onContractCreated(contractId);
+          }
+        }}
+      />
     </div>
   );
 };

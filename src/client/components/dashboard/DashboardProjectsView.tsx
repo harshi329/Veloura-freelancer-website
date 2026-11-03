@@ -21,6 +21,7 @@ interface DashboardProjectsViewProps {
   onSelectProjectProposals: (projectId: string) => void;
   onOpenProjectChat: (projectId: string) => void;
   onNavigatePost: () => void;
+  onCloseProject?: (projectId: string) => Promise<void>;
 }
 
 export const DashboardProjectsView: React.FC<DashboardProjectsViewProps> = ({
@@ -30,6 +31,7 @@ export const DashboardProjectsView: React.FC<DashboardProjectsViewProps> = ({
   onSelectProjectProposals,
   onOpenProjectChat,
   onNavigatePost,
+  onCloseProject,
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'in_progress' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -43,7 +45,7 @@ export const DashboardProjectsView: React.FC<DashboardProjectsViewProps> = ({
       })
     : projects;
 
-  const displayProjects = myProjects.length > 0 ? myProjects : projects;
+  const displayProjects = isClient ? myProjects : projects;
 
   const filteredProjects = displayProjects.filter((p) => {
     if (statusFilter !== 'all' && p.status !== statusFilter) return false;
@@ -216,14 +218,26 @@ export const DashboardProjectsView: React.FC<DashboardProjectsViewProps> = ({
 
                 {/* Card Actions */}
                 <div className="pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onSelectProjectProposals(project._id)}
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-500 hover:text-rose-400 cursor-pointer"
-                  >
-                    <Users className="h-3.5 w-3.5" />
-                    <span>Proposals ({proposalCount})</span>
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => onSelectProjectProposals(project._id)}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-500 hover:text-rose-400 cursor-pointer"
+                    >
+                      <Users className="h-3.5 w-3.5" />
+                      <span>Proposals ({proposalCount})</span>
+                    </button>
+
+                    {isClient && project.status === 'open' && onCloseProject && (
+                      <button
+                        type="button"
+                        onClick={() => onCloseProject(project._id)}
+                        className="text-[11px] font-medium text-[var(--text-muted)] hover:text-rose-500 cursor-pointer transition-colors"
+                      >
+                        Close Brief
+                      </button>
+                    )}
+                  </div>
 
                   <button
                     type="button"

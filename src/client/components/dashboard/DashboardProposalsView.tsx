@@ -26,6 +26,7 @@ interface DashboardProposalsViewProps {
   ) => Promise<void>;
   onOpenReviewModal: (proposal: ProposalItem) => void;
   onOpenChat: (projectId: string) => void;
+  onWithdrawProposal?: (proposalId: string) => Promise<void>;
 }
 
 export const DashboardProposalsView: React.FC<DashboardProposalsViewProps> = ({
@@ -36,6 +37,7 @@ export const DashboardProposalsView: React.FC<DashboardProposalsViewProps> = ({
   onProposalDecision,
   onOpenReviewModal,
   onOpenChat,
+  onWithdrawProposal,
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'shortlisted' | 'accepted' | 'rejected'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -286,7 +288,7 @@ export const DashboardProposalsView: React.FC<DashboardProposalsViewProps> = ({
 
                   {isClient && proposal.status !== 'accepted' && (
                     <div className="flex items-center gap-2">
-                      {proposal.status !== 'shortlisted' && (
+                      {proposal.status !== 'shortlisted' && proposal.status !== 'rejected' && (
                         <button
                           type="button"
                           onClick={() => onProposalDecision(proposal._id, 'shortlisted')}
@@ -306,15 +308,34 @@ export const DashboardProposalsView: React.FC<DashboardProposalsViewProps> = ({
                         </button>
                       )}
 
-                      <button
-                        type="button"
-                        onClick={() => onProposalDecision(proposal._id, 'accepted')}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:from-emerald-500 hover:to-teal-500 cursor-pointer"
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        <span>Accept &amp; Form Contract</span>
-                      </button>
+                      {proposal.status !== 'rejected' && (
+                        <button
+                          type="button"
+                          onClick={() => onProposalDecision(proposal._id, 'accepted')}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:from-emerald-500 hover:to-teal-500 cursor-pointer"
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span>Accept &amp; Form Contract</span>
+                        </button>
+                      )}
                     </div>
+                  )}
+
+                  {!isClient && proposal.status === 'pending' && onWithdrawProposal && (
+                    <button
+                      type="button"
+                      onClick={() => onWithdrawProposal(proposal._id)}
+                      className="text-xs text-[var(--text-muted)] hover:text-rose-500 font-medium underline cursor-pointer transition-colors"
+                    >
+                      Withdraw Proposal
+                    </button>
+                  )}
+
+                  {!isClient && proposal.status === 'accepted' && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-bold border border-emerald-400/20">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <span>Awarded by Client — See Contracts tab to accept or decline</span>
+                    </span>
                   )}
                 </div>
               </div>

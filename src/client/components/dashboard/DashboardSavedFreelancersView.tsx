@@ -243,10 +243,10 @@ export const DashboardSavedFreelancersView: React.FC<DashboardSavedFreelancersVi
                   </span>
 
                   <a
-                    href={`/freelancers?id=${freelancer._id}`}
+                    href={`/freelancers?highlight=${freelancer._id}`}
                     className="inline-flex items-center gap-1 text-xs font-bold text-rose-500 hover:underline"
                   >
-                    <span>View Profile</span>
+                    <span>Inspect Full Portfolio</span>
                     <ExternalLink className="h-3 w-3" />
                   </a>
                 </div>

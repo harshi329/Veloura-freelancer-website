@@ -1,6 +1,4 @@
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
 import { Router, type Request, type Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
@@ -9,6 +7,7 @@ import {
   signToken,
   signShortLived,
   verifyShortLived,
+  requireAuth,
   optionalAuth,
   type AuthenticatedRequest,
 } from '../middleware/auth.js';
@@ -36,9 +35,9 @@ function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-// --- Minimal in-memory rate limiter for sensitive auth endpoints ---
+// --- In-memory rate limiter for sensitive auth endpoints ---
 const attempts = new Map<string, { count: number; resetAt: number }>();
-function rateLimited(key: string, max: number, windowMs: number): boolean {
+export function rateLimited(key: string, max: number, windowMs: number): boolean {
   if (IS_TEST) return false;
   const now = Date.now();
   const entry = attempts.get(key);
@@ -50,9 +49,89 @@ function rateLimited(key: string, max: number, windowMs: number): boolean {
   return entry.count > max;
 }
 
+// --- Outbound Transactional Email Service (Resend with Graceful Fallback) ---
+async function sendPasswordResetEmail(email: string, resetUrl: string): Promise<boolean> {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  if (!resendApiKey) {
+    return false;
+  }
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${resendApiKey}`,
+      },
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM || 'Veloura Security <security@veloura.dev>',
+        to: [email],
+        subject: 'Reset your Veloura password',
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 32px 24px; color: #1a1a1a;">
+            <h2 style="font-size: 22px; font-weight: 800; margin-bottom: 16px;">Reset Your Veloura Password</h2>
+            <p style="font-size: 14px; line-height: 1.6; color: #4a4a4a;">
+              We received a request to reset the password for your Veloura account. Click the button below to set a new password:
+            </p>
+            <div style="margin: 28px 0;">
+              <a href="${resetUrl}" style="background-color: #ff3366; color: #ffffff; padding: 12px 28px; border-radius: 9999px; text-decoration: none; font-weight: 700; font-size: 14px; display: inline-block;">
+                Reset Password
+              </a>
+            </div>
+            <p style="font-size: 12px; color: #888888; line-height: 1.5;">
+              This link is valid for 30 minutes. If you did not request a password reset, you can safely ignore this email.
+            </p>
+          </div>
+        `,
+      }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.error('[Veloura Email] Resend delivery error:', err);
+    return false;
+  }
+}
+
 // =====================================================================
-// 1. PASSWORD RESET (token stored as SHA-256 hash, 30-minute expiry)
+// 1. PASSWORD MANAGEMENT (Change Password & Tokenized Reset)
 // =====================================================================
+
+// PUT /api/auth/password — Authenticated user changing their password
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required.'),
+  newPassword: z.string().min(6, 'New password must be at least 6 characters.'),
+});
+
+authExtrasRouter.put('/auth/password', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const parsed = changePasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid password data.' });
+      return;
+    }
+    const { currentPassword, newPassword } = parsed.data;
+
+    const user = await User.findById(req.user!._id).select('+passwordHash');
+    if (!user) {
+      res.status(404).json({ error: 'User account not found.' });
+      return;
+    }
+
+    const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!matches) {
+      res.status(400).json({ error: 'Current password is incorrect.' });
+      return;
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    res.json({ success: true, message: 'Password updated successfully.' });
+  } catch (err) {
+    console.error('[Veloura Auth] Password update failed:', err);
+    res.status(500).json({ error: 'Failed to update password.' });
+  }
+});
+
 const forgotSchema = z.object({ email: z.string().email('Enter a valid email address.') });
 const resetSchema = z.object({
   token: z.string().min(20, 'Reset link is invalid.'),
@@ -93,23 +172,28 @@ authExtrasRouter.post('/auth/forgot-password', async (req, res) => {
     );
 
     const resetUrl = `${appBaseUrl(req)}/reset-password?token=${rawToken}`;
+    const sentViaEmail = await sendPasswordResetEmail(email, resetUrl);
 
-    // No outbound email provider is configured in this project. In development the link is
-    // returned so the full flow can be tested; in production it is only written to server logs.
+    if (sentViaEmail) {
+      res.json({ message: genericMessage, emailDelivery: 'sent' });
+      return;
+    }
+
     if (IS_PRODUCTION) {
-      console.info(`[Veloura Auth] Password reset requested for ${email}. Configure an email provider to deliver: ${resetUrl}`);
-      res.json({ message: genericMessage, emailDelivery: 'not_configured' });
+      console.info(`[Veloura Auth] Password reset link generated for ${email}: ${resetUrl}`);
+      res.json({ message: genericMessage, emailDelivery: 'logged' });
       return;
     }
 
     res.json({
       message: genericMessage,
-      emailDelivery: 'not_configured',
+      emailDelivery: 'dev_returned',
       devResetUrl: resetUrl,
       expiresInMinutes: RESET_TOKEN_TTL_MS / 60000,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to start password reset', details: String(err) });
+    console.error('[Veloura Auth] Forgot password error:', err);
+    res.status(500).json({ error: 'Failed to start password reset' });
   }
 });
 
@@ -157,12 +241,13 @@ authExtrasRouter.post('/auth/reset-password', async (req, res) => {
     setAuthCookie(res, authToken);
     res.json({ message: 'Password updated successfully.', token: authToken, user: freshUser });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to reset password', details: String(err) });
+    console.error('[Veloura Auth] Reset password error:', err);
+    res.status(500).json({ error: 'Failed to reset password' });
   }
 });
 
 // =====================================================================
-// 2. OAUTH 2.0 — GOOGLE & GITHUB (Authorization Code flow, server-side)
+// 2. OAUTH 2.0 — SECURE SERVER-SIDE CODE EXCHANGE & GOOGLE ID-TOKEN VERIFY
 // =====================================================================
 type OAuthProvider = 'google' | 'github';
 
@@ -218,122 +303,60 @@ authExtrasRouter.get('/auth/oauth/providers', (req, res) => {
   });
 });
 
-const oauthConfigureSchema = z.object({
-  provider: z.enum(['google', 'github']),
-  clientId: z.string().trim().min(5, 'Client ID is required'),
-  clientSecret: z.string().trim().min(5, 'Client Secret is required'),
-});
-
-authExtrasRouter.post('/auth/oauth/configure', async (req, res) => {
-  try {
-    const parsed = oauthConfigureSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid credentials' });
-      return;
-    }
-
-    const { provider, clientId, clientSecret } = parsed.data;
-    const idKey = provider === 'google' ? 'GOOGLE_CLIENT_ID' : 'GITHUB_CLIENT_ID';
-    const secretKey = provider === 'google' ? 'GOOGLE_CLIENT_SECRET' : 'GITHUB_CLIENT_SECRET';
-
-    process.env[idKey] = clientId;
-    process.env[secretKey] = clientSecret;
-
-    // Persist to .env file (skip in test runs to protect real credentials)
-    if (!IS_TEST) {
-      try {
-        const envPath = path.resolve(process.cwd(), '.env');
-        let envContent = '';
-        if (fs.existsSync(envPath)) {
-          envContent = fs.readFileSync(envPath, 'utf-8');
-        }
-
-        const updateKey = (content: string, key: string, value: string): string => {
-          const regex = new RegExp(`^${key}=.*$`, 'm');
-          if (regex.test(content)) {
-            return content.replace(regex, `${key}=${value}`);
-          }
-          return `${content.trim()}\n${key}=${value}\n`;
-        };
-
-        envContent = updateKey(envContent, idKey, clientId);
-        envContent = updateKey(envContent, secretKey, clientSecret);
-        fs.writeFileSync(envPath, envContent, 'utf-8');
-      } catch (fsErr) {
-        console.warn('[Veloura OAuth] Could not write to .env, retained in memory:', fsErr);
-      }
-    }
-
-    res.json({
-      success: true,
-      provider,
-      configured: isConfigured(provider),
-      message: `Real ${provider === 'google' ? 'Google' : 'GitHub'} OAuth credentials saved and active.`,
-      redirectUri: callbackUrl(req, provider),
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to configure OAuth', details: String(err) });
-  }
-});
-
-const directSocialSchema = z.object({
-  email: z.string().email('Valid email address required'),
-  name: z.string().min(1).default('Google User'),
-  avatarUrl: z.string().optional(),
+// Strict Google ID Token Verification (Only accepted with valid token, aud match, and email_verified)
+const googleVerifySchema = z.object({
+  idToken: z.string().min(20, 'Google ID token required'),
   role: z.enum(['client', 'freelancer']).default('client'),
-  idToken: z.string().optional(),
 });
 
-authExtrasRouter.post('/auth/oauth/:provider/direct', async (req, res) => {
-  const provider = parseProvider(req.params.provider);
-  if (!provider) {
-    res.status(400).json({ error: 'Unsupported social auth provider' });
-    return;
-  }
-
+authExtrasRouter.post('/auth/oauth/google/verify-credential', async (req, res) => {
   try {
-    const parsed = directSocialSchema.safeParse(req.body);
+    const parsed = googleVerifySchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid request' });
+      res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid Google credential' });
+      return;
+    }
+    const { idToken, role } = parsed.data;
+
+    // Strict verification against Google tokeninfo endpoint
+    const verifyRes = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
+    );
+    if (!verifyRes.ok) {
+      res.status(401).json({ error: 'Google authentication failed: ID token is invalid or expired' });
       return;
     }
 
-    let { email, name, avatarUrl, role, idToken } = parsed.data;
-    email = email.toLowerCase().trim();
-    const idField = provider === 'google' ? 'googleId' : 'githubId';
-    let providerId = `${provider}_usr_${crypto.createHash('sha256').update(email).digest('hex').slice(0, 24)}`;
+    const payload = (await verifyRes.json()) as {
+      aud?: string;
+      sub?: string;
+      email?: string;
+      email_verified?: string | boolean;
+      name?: string;
+      picture?: string;
+    };
 
-    // If an idToken from real Google Identity Services (GIS) is provided, verify it with Google's tokeninfo API
-    if (provider === 'google' && idToken) {
-      try {
-        const verifyRes = await fetch(
-          `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
-        );
-        if (verifyRes.ok) {
-          const payload = (await verifyRes.json()) as {
-            sub?: string;
-            email?: string;
-            name?: string;
-            picture?: string;
-          };
-          if (payload.email) {
-            email = payload.email.toLowerCase().trim();
-            if (payload.sub) providerId = payload.sub;
-            if (payload.name) name = payload.name;
-            if (payload.picture) avatarUrl = payload.picture;
-          }
-        }
-      } catch (err) {
-        console.warn('[Veloura OAuth] Google tokeninfo verification skipped:', err);
-      }
+    // Strict aud check
+    const expectedClientId = process.env.GOOGLE_CLIENT_ID;
+    if (expectedClientId && payload.aud !== expectedClientId) {
+      res.status(401).json({ error: 'Google authentication failed: Client ID mismatch (aud check failed)' });
+      return;
     }
 
-    if (!avatarUrl) {
-      avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=AD1457&color=ffffff&bold=true`;
+    // Strict email verification check
+    const isEmailVerified = payload.email_verified === 'true' || payload.email_verified === true;
+    if (!payload.email || !isEmailVerified) {
+      res.status(401).json({ error: 'Google authentication failed: Email is unverified by Google' });
+      return;
     }
+
+    const email = payload.email.toLowerCase().trim();
+    const providerId = payload.sub || `google_${crypto.createHash('sha256').update(email).digest('hex').slice(0, 24)}`;
+    const name = payload.name || email.split('@')[0];
+    const avatarUrl = payload.picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=AD1457&color=ffffff&bold=true`;
 
     let user = await User.findOne({
-      $or: [{ [idField]: providerId }, { email }],
+      $or: [{ googleId: providerId }, { email }],
     });
     let isNewUser = false;
 
@@ -349,16 +372,15 @@ authExtrasRouter.post('/auth/oauth/:provider/direct', async (req, res) => {
         skills: [],
         hourlyRate: role === 'freelancer' ? 120 : 0,
         onboarded: false,
-        [idField]: providerId,
+        verified: true,
+        emailVerified: true,
+        googleId: providerId,
       });
       isNewUser = true;
     } else {
-      if (!user.get(idField)) {
-        user.set(idField, providerId);
-      }
-      if (!user.avatarUrl && avatarUrl) {
-        user.avatarUrl = avatarUrl;
-      }
+      if (!user.googleId) user.googleId = providerId;
+      if (!user.emailVerified) user.emailVerified = true;
+      if (!user.avatarUrl && avatarUrl) user.avatarUrl = avatarUrl;
       await user.save();
     }
 
@@ -372,8 +394,8 @@ authExtrasRouter.post('/auth/oauth/:provider/direct', async (req, res) => {
       next: isNewUser || !user.onboarded ? '/onboarding' : '/dashboard',
     });
   } catch (err) {
-    console.error(`[Veloura OAuth] ${provider} direct sign-in failed:`, err);
-    res.status(500).json({ error: `Social sign-in failed: ${String(err)}` });
+    console.error('[Veloura OAuth] Google credential verification failed:', err);
+    res.status(500).json({ error: 'Google authentication failed' });
   }
 });
 
@@ -386,9 +408,7 @@ authExtrasRouter.get('/auth/oauth/:provider/start', (req, res) => {
   const role = req.query.role === 'client' ? 'client' : 'freelancer';
 
   if (!isConfigured(provider)) {
-    // If provider OAuth credentials are not set in .env, redirect to auth with openChooser parameter
-    // so the interactive account picker opens immediately without error.
-    res.redirect(`/auth?openChooser=${provider}&role=${role}`);
+    res.redirect(`/auth?oauthError=${provider}_not_configured`);
     return;
   }
   const nonce = crypto.randomBytes(16).toString('hex');
@@ -533,6 +553,7 @@ authExtrasRouter.get('/auth/oauth/:provider/callback', async (req, res) => {
           return;
         }
         existingByEmail.set(idField, identity.providerId);
+        existingByEmail.set('emailVerified', true);
         if (!existingByEmail.avatarUrl && identity.avatarUrl) existingByEmail.avatarUrl = identity.avatarUrl;
         await existingByEmail.save();
         user = existingByEmail;
@@ -548,6 +569,8 @@ authExtrasRouter.get('/auth/oauth/:provider/callback', async (req, res) => {
           skills: [],
           hourlyRate: state.role === 'freelancer' ? 110 : 0,
           onboarded: false,
+          verified: true,
+          emailVerified: true,
           [idField]: identity.providerId,
         });
         isNewUser = true;
@@ -595,6 +618,7 @@ authExtrasRouter.post('/support', optionalAuth, async (req: AuthenticatedRequest
       message: 'Support request received.',
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to submit support request', details: String(err) });
+    console.error('[Veloura Support] Submission failed:', err);
+    res.status(500).json({ error: 'Failed to submit support request' });
   }
 });

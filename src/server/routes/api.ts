@@ -19,8 +19,13 @@ import {
   type AuthenticatedRequest,
 } from '../middleware/auth.js';
 import { computeExplainableMatch } from '../../shared/matching.js';
+import { rateLimited } from './authExtras.js';
 
 export const apiRouter = Router();
+
+function escapeRegex(text: string): string {
+  return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+}
 
 // --- Validation Schemas ---
 const registerSchema = z.object({
@@ -144,6 +149,16 @@ const createProposalSchema = z.object({
     .optional(),
 });
 
+const directHireSchema = z.object({
+  freelancerId: z.string().min(1, 'Freelancer ID is required'),
+  projectId: z.string().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  agreedAmount: z.number().min(10).optional(),
+  estimatedDays: z.number().min(1).max(365).optional(),
+  coverNote: z.string().optional(),
+});
+
 function setAuthCookie(res: Response, token: string): void {
   res.cookie('veloura_token', token, {
     httpOnly: true,
@@ -233,13 +248,19 @@ apiRouter.get('/stats', optionalAuth, async (req: AuthenticatedRequest, res) => 
       featuredProjects: enrichedProjects,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to load marketplace statistics', details: String(err) });
+    res.status(500).json({ error: 'Failed to load marketplace statistics' });
   }
 });
 
 // --- 2. Authentication & Profile Onboarding ---
 apiRouter.post('/auth/register', async (req, res) => {
   try {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    if (rateLimited(`register:${ip}`, 5, 60 * 60 * 1000)) {
+      res.status(429).json({ error: 'Too many registration attempts. Please try again in an hour.' });
+      return;
+    }
+
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid registration data' });
@@ -266,7 +287,8 @@ apiRouter.post('/auth/register', async (req, res) => {
       skills: role === 'freelancer' ? ['TypeScript', 'React', 'System Architecture'] : [],
       hourlyRate: role === 'freelancer' ? 110 : 0,
       onboarded: false,
-      verified: true,
+      verified: false,
+      emailVerified: false,
     });
 
     const token = signToken(String(user._id), user.role);
@@ -276,12 +298,18 @@ apiRouter.post('/auth/register', async (req, res) => {
 
     res.status(201).json({ token, user: userObj });
   } catch (err) {
-    res.status(500).json({ error: 'Registration failed', details: String(err) });
+    res.status(500).json({ error: 'Registration failed' });
   }
 });
 
 apiRouter.post('/auth/login', async (req, res) => {
   try {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    if (rateLimited(`login:${ip}`, 10, 15 * 60 * 1000)) {
+      res.status(429).json({ error: 'Too many login attempts. Please try again in 15 minutes.' });
+      return;
+    }
+
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: 'Valid email and password are required.' });
@@ -317,12 +345,16 @@ apiRouter.post('/auth/login', async (req, res) => {
 
     res.json({ token, user: userObj });
   } catch (err) {
-    res.status(500).json({ error: 'Login failed', details: String(err) });
+    res.status(500).json({ error: 'Login failed' });
   }
 });
 
 apiRouter.post('/auth/logout', (_req, res) => {
-  res.clearCookie('veloura_token');
+  res.clearCookie('veloura_token', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+  });
   res.json({ message: 'Signed out successfully.' });
 });
 
@@ -353,7 +385,42 @@ apiRouter.put('/profile', requireAuth, async (req: AuthenticatedRequest, res) =>
     setAuthCookie(res, token);
     res.json({ user: updatedUser, token });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update profile', details: String(err) });
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// --- Fast 1-Click Role Switcher (Client <-> Freelancer) ---
+apiRouter.post('/auth/switch-role', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const targetRole = (req.body as { role?: 'client' | 'freelancer' }).role;
+    const newRole = targetRole || (req.user!.role === 'client' ? 'freelancer' : 'client');
+
+    if (newRole !== 'client' && newRole !== 'freelancer') {
+      res.status(400).json({ error: 'Role must be either client or freelancer.' });
+      return;
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user!._id,
+      { $set: { role: newRole } },
+      { new: true }
+    );
+
+    if (!updatedUser) {
+      res.status(404).json({ error: 'User not found.' });
+      return;
+    }
+
+    const token = signToken(String(updatedUser._id), updatedUser.role);
+    setAuthCookie(res, token);
+    res.json({
+      success: true,
+      message: `Switched to ${newRole === 'client' ? 'Client' : 'Freelancer'} Workspace`,
+      user: updatedUser,
+      token,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to switch workspace role' });
   }
 });
 
@@ -384,7 +451,7 @@ apiRouter.post('/profile/portfolio', requireAuth, async (req: AuthenticatedReque
       item: userDoc.portfolio[userDoc.portfolio.length - 1],
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to add portfolio item', details: String(err) });
+    res.status(500).json({ error: 'Failed to add portfolio item' });
   }
 });
 
@@ -413,7 +480,7 @@ apiRouter.put('/profile/portfolio/:id', requireAuth, async (req: AuthenticatedRe
       portfolio: userDoc.portfolio,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update portfolio item', details: String(err) });
+    res.status(500).json({ error: 'Failed to update portfolio item' });
   }
 });
 
@@ -432,7 +499,7 @@ apiRouter.delete('/profile/portfolio/:id', requireAuth, async (req: Authenticate
       portfolio: userDoc.portfolio,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to delete portfolio item', details: String(err) });
+    res.status(500).json({ error: 'Failed to delete portfolio item' });
   }
 });
 
@@ -461,13 +528,13 @@ apiRouter.get('/freelancers', optionalAuth, async (req: AuthenticatedRequest, re
       andConditions.push({ hourlyRate: { $lte: Number(maxRate) } });
     }
     if (skill && typeof skill === 'string' && skill.trim()) {
-      andConditions.push({ skills: { $regex: new RegExp(skill.trim(), 'i') } });
+      andConditions.push({ skills: { $regex: new RegExp(escapeRegex(skill.trim()), 'i') } });
     }
     if (q && typeof q === 'string' && q.trim()) {
-      // Split requirements string by spaces/commas to match multi-skill briefs
+      // Split requirements string by spaces/commas to match multi-skill briefs safely
       const terms = q.trim().split(/[\s,]+/).filter(Boolean);
       const orClauses = terms.map((term) => {
-        const r = new RegExp(term, 'i');
+        const r = new RegExp(escapeRegex(term), 'i');
         return {
           $or: [
             { name: r },
@@ -521,7 +588,7 @@ apiRouter.get('/freelancers', optionalAuth, async (req: AuthenticatedRequest, re
 
     res.json({ freelancers: results });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch freelancers', details: String(err) });
+    res.status(500).json({ error: 'Failed to fetch freelancers' });
   }
 });
 
@@ -540,7 +607,7 @@ apiRouter.get('/freelancers/:id', optionalAuth, async (req, res) => {
 
     res.json({ freelancer, reviews });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to load freelancer profile', details: String(err) });
+    res.status(500).json({ error: 'Failed to load freelancer profile' });
   }
 });
 
@@ -563,10 +630,10 @@ apiRouter.get('/projects', optionalAuth, async (req: AuthenticatedRequest, res) 
       filter.budgetMin = { $lte: Number(maxBudget) };
     }
     if (skill && typeof skill === 'string' && skill.trim()) {
-      filter.requiredSkills = { $regex: new RegExp(skill.trim(), 'i') };
+      filter.requiredSkills = { $regex: new RegExp(escapeRegex(skill.trim()), 'i') };
     }
     if (q && typeof q === 'string' && q.trim()) {
-      const regex = new RegExp(q.trim(), 'i');
+      const regex = new RegExp(escapeRegex(q.trim()), 'i');
       filter.$or = [
         { title: regex },
         { summary: regex },
@@ -592,7 +659,7 @@ apiRouter.get('/projects', optionalAuth, async (req: AuthenticatedRequest, res) 
 
     res.json({ projects: enriched });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch projects', details: String(err) });
+    res.status(500).json({ error: 'Failed to fetch projects' });
   }
 });
 
@@ -626,7 +693,7 @@ apiRouter.post('/projects/:id/bookmark', requireAuth, async (req: AuthenticatedR
       savedProjects: updatedSaved,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update bookmark', details: String(err) });
+    res.status(500).json({ error: 'Failed to update bookmark' });
   }
 });
 
@@ -639,7 +706,7 @@ apiRouter.get('/my/bookmarks', requireAuth, async (req: AuthenticatedRequest, re
       .lean();
     res.json({ projects, savedIds });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch bookmarked projects', details: String(err) });
+    res.status(500).json({ error: 'Failed to fetch bookmarked projects' });
   }
 });
 
@@ -673,7 +740,7 @@ apiRouter.post('/freelancers/:id/bookmark', requireAuth, async (req: Authenticat
       savedFreelancers: updatedSaved,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update saved freelancer', details: String(err) });
+    res.status(500).json({ error: 'Failed to update saved freelancer' });
   }
 });
 
@@ -687,7 +754,7 @@ apiRouter.get('/my/saved-freelancers', requireAuth, async (req: AuthenticatedReq
       .lean();
     res.json({ freelancers, savedIds });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch saved freelancers', details: String(err) });
+    res.status(500).json({ error: 'Failed to fetch saved freelancers' });
   }
 });
 
@@ -752,7 +819,7 @@ apiRouter.get('/projects/:id', optionalAuth, async (req: AuthenticatedRequest, r
       contract,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to load project details', details: String(err) });
+    res.status(500).json({ error: 'Failed to load project details' });
   }
 });
 
@@ -803,7 +870,47 @@ apiRouter.post(
 
       res.status(201).json({ project: populated });
     } catch (err) {
-      res.status(500).json({ error: 'Failed to publish project', details: String(err) });
+      res.status(500).json({ error: 'Failed to publish project' });
+    }
+  }
+);
+
+apiRouter.patch(
+  '/projects/:id/close',
+  requireAuth,
+  requireRole('client', 'admin'),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const project = await Project.findById(req.params.id);
+      if (!project) {
+        res.status(404).json({ error: 'Project not found.' });
+        return;
+      }
+
+      if (req.user!.role !== 'admin' && String(project.client) !== String(req.user!._id)) {
+        res.status(403).json({ error: 'Forbidden: Only the project owner or admin can close this project.' });
+        return;
+      }
+
+      if (project.status !== 'open') {
+        res.status(400).json({
+          error: `Cannot close project with status '${project.status}'. Only open projects can be closed.`,
+        });
+        return;
+      }
+
+      project.status = 'cancelled';
+      await project.save();
+
+      // Automatically reject pending proposals
+      await Proposal.updateMany(
+        { projectId: project._id, status: { $in: ['pending', 'shortlisted'] } },
+        { $set: { status: 'rejected' } }
+      );
+
+      res.json({ project, message: 'Project closed successfully.' });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to close project' });
     }
   }
 );
@@ -841,6 +948,26 @@ apiRouter.post(
       }
 
       const { coverLetter, bidAmount, estimatedDays, milestones } = parsed.data;
+
+      // Validate milestone allocations against proposal bid
+      if (milestones && milestones.length > 0) {
+        const milestoneTotal = milestones.reduce((sum, m) => sum + m.amount, 0);
+        if (Math.abs(milestoneTotal - bidAmount) > 0.01) {
+          res.status(400).json({
+            error: `Total milestone allocations ($${milestoneTotal.toLocaleString()}) must equal proposal bid amount ($${bidAmount.toLocaleString()}).`,
+          });
+          return;
+        }
+      }
+
+      // Check that bid is reasonable relative to maximum project budget
+      if (bidAmount > project.budgetMax * 3) {
+        res.status(400).json({
+          error: `Proposal bid ($${bidAmount.toLocaleString()}) exceeds the project budget ceiling ($${project.budgetMax.toLocaleString()}).`,
+        });
+        return;
+      }
+
       const matchSnapshot = computeExplainableMatch(req.user!, project, bidAmount);
 
       const proposal = await Proposal.create({
@@ -885,7 +1012,7 @@ apiRouter.post(
 
       res.status(201).json({ proposal: populated });
     } catch (err) {
-      res.status(500).json({ error: 'Failed to submit proposal', details: String(err) });
+      res.status(500).json({ error: 'Failed to submit proposal' });
     }
   }
 );
@@ -914,7 +1041,7 @@ apiRouter.get('/my/proposals', requireAuth, async (req: AuthenticatedRequest, re
       .lean();
     res.json({ proposals });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to load proposals', details: String(err) });
+    res.status(500).json({ error: 'Failed to load proposals' });
   }
 });
 
@@ -973,7 +1100,15 @@ apiRouter.patch(
         return;
       }
 
-      // Status === 'accepted': Atomic conditional transition to prevent race conditions
+      // Status === 'accepted': Prevent accepting already resolved proposals
+      if (proposal.status !== 'pending' && proposal.status !== 'shortlisted') {
+        res.status(409).json({
+          error: `Cannot accept proposal: proposal status is already '${proposal.status}'.`,
+        });
+        return;
+      }
+
+      // Atomic conditional transition to prevent race conditions
       const lockedProject = await Project.findOneAndUpdate(
         {
           _id: project._id,
@@ -996,40 +1131,317 @@ apiRouter.patch(
         return;
       }
 
-      proposal.status = 'accepted';
-      await proposal.save();
+      try {
+        proposal.status = 'accepted';
+        await proposal.save();
 
-      // Reject all other pending/shortlisted proposals on this project
+        // Reject all other pending/shortlisted proposals on this project
+        await Proposal.updateMany(
+          { projectId: project._id, _id: { $ne: proposal._id } },
+          { $set: { status: 'rejected' } }
+        );
+
+        const contract = await Contract.create({
+          projectId: project._id,
+          proposalId: proposal._id,
+          client: project.client,
+          freelancer: proposal.freelancer,
+          agreedAmount: proposal.bidAmount,
+          estimatedDays: proposal.estimatedDays,
+          status: 'active',
+          milestones: proposal.milestones,
+        });
+
+        await Notification.create({
+          userId: proposal.freelancer,
+          type: 'contract',
+          title: `Contract Awarded — ${project.title}`,
+          body: `${req.user!.name} accepted your $${proposal.bidAmount.toLocaleString()} proposal and activated Contract #${String(contract._id).slice(-6)}.`,
+          link: `/dashboard`,
+        });
+
+        res.json({ proposal, project: lockedProject, contract });
+      } catch (innerErr) {
+        // Rollback project & proposal if subsequent creation fails
+        await Project.findByIdAndUpdate(project._id, {
+          $set: { status: 'open' },
+          $unset: { acceptedProposalId: 1, assignedFreelancerId: 1 },
+        });
+        await Proposal.findByIdAndUpdate(proposal._id, { $set: { status: 'pending' } });
+        await Proposal.updateMany(
+          { projectId: project._id, _id: { $ne: proposal._id }, status: 'rejected' },
+          { $set: { status: 'pending' } }
+        );
+        throw innerErr;
+      }
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to update proposal status' });
+    }
+  }
+);
+
+apiRouter.delete('/proposals/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const proposal = await Proposal.findById(req.params.id);
+    if (!proposal) {
+      res.status(404).json({ error: 'Proposal not found.' });
+      return;
+    }
+
+    if (req.user!.role !== 'admin' && String(proposal.freelancer) !== String(req.user!._id)) {
+      res.status(403).json({ error: 'Forbidden: You can only withdraw your own proposals.' });
+      return;
+    }
+
+    if (proposal.status !== 'pending') {
+      res.status(400).json({
+        error: `Cannot withdraw proposal with status '${proposal.status}'. Only pending proposals can be withdrawn.`,
+      });
+      return;
+    }
+
+    await Proposal.findByIdAndDelete(proposal._id);
+    await Project.findByIdAndUpdate(proposal.projectId, { $inc: { proposalCount: -1 } });
+
+    res.json({ success: true, message: 'Proposal withdrawn successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to withdraw proposal' });
+  }
+});
+
+// --- 5.1 Direct Hire & Talent Commissioning ---
+apiRouter.post('/hire', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user!.role !== 'client' && req.user!.role !== 'admin') {
+      res.status(403).json({ error: 'Forbidden: Only clients can hire or commission talent.' });
+      return;
+    }
+
+    const parsed = directHireSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid hiring parameters' });
+      return;
+    }
+
+    const { freelancerId, projectId, title, description, agreedAmount, estimatedDays, coverNote } =
+      parsed.data;
+
+    const freelancer = await User.findById(freelancerId);
+    if (!freelancer || (freelancer.role !== 'freelancer' && req.user!.role !== 'admin')) {
+      res.status(404).json({ error: 'Specialist account not found or is not available for hire.' });
+      return;
+    }
+
+    if (String(freelancer._id) === String(req.user!._id)) {
+      res.status(400).json({ error: 'You cannot hire yourself.' });
+      return;
+    }
+
+    // Branch 1: Assign to an existing open brief
+    if (projectId) {
+      const project = await Project.findById(projectId);
+      if (!project) {
+        res.status(404).json({ error: 'Project brief not found.' });
+        return;
+      }
+
+      if (req.user!.role !== 'admin' && String(project.client) !== String(req.user!._id)) {
+        res.status(403).json({ error: 'Forbidden: You can only award your own project briefs.' });
+        return;
+      }
+
+      if (project.status !== 'open') {
+        res.status(409).json({ error: `Cannot award project: status is already '${project.status}'.` });
+        return;
+      }
+
+      // Check if this freelancer already submitted a proposal
+      let proposal = await Proposal.findOne({ projectId: project._id, freelancer: freelancer._id });
+      const finalAmount =
+        agreedAmount ||
+        (proposal ? proposal.bidAmount : project.budgetMax || project.budgetMin || 1000);
+      const finalDays =
+        estimatedDays || (proposal ? proposal.estimatedDays : project.deadlineDays || 14);
+
+      if (!proposal) {
+        proposal = await Proposal.create({
+          projectId: project._id,
+          freelancer: freelancer._id,
+          coverLetter:
+            coverNote || `Direct hiring offer from ${req.user!.name} for "${project.title}".`,
+          bidAmount: finalAmount,
+          estimatedDays: finalDays,
+          milestones: [
+            {
+              title: `${project.title} Sprint Delivery`,
+              amount: finalAmount,
+              dueDays: finalDays,
+              status: 'pending',
+            },
+          ],
+          status: 'accepted',
+          matchSnapshot: {
+            overallScore: 96,
+            skillOverlapScore: 40,
+            rateScore: 20,
+            seniorityScore: 15,
+            portfolioScore: 15,
+            reliabilityScore: 6,
+            explanation: 'Client directly selected and awarded this project brief.',
+          },
+        });
+        await Project.findByIdAndUpdate(project._id, { $inc: { proposalCount: 1 } });
+      } else {
+        proposal.status = 'accepted';
+        if (agreedAmount) proposal.bidAmount = agreedAmount;
+        if (estimatedDays) proposal.estimatedDays = estimatedDays;
+        await proposal.save();
+      }
+
+      // Atomically update project to in_progress
+      const lockedProject = await Project.findOneAndUpdate(
+        { _id: project._id, status: 'open' },
+        {
+          $set: {
+            status: 'in_progress',
+            acceptedProposalId: proposal._id,
+            assignedFreelancerId: freelancer._id,
+          },
+        },
+        { new: true }
+      );
+
+      if (!lockedProject) {
+        res.status(409).json({ error: 'Project was updated concurrently by another action.' });
+        return;
+      }
+
+      // Reject all other proposals for this project
       await Proposal.updateMany(
         { projectId: project._id, _id: { $ne: proposal._id } },
         { $set: { status: 'rejected' } }
       );
 
+      // Create contract with pending_acceptance
       const contract = await Contract.create({
         projectId: project._id,
         proposalId: proposal._id,
-        client: project.client,
-        freelancer: proposal.freelancer,
+        client: req.user!._id,
+        freelancer: freelancer._id,
         agreedAmount: proposal.bidAmount,
         estimatedDays: proposal.estimatedDays,
-        status: 'active',
+        status: 'pending_acceptance',
         milestones: proposal.milestones,
       });
 
+      // Send notification with accept/decline instructions
       await Notification.create({
-        userId: proposal.freelancer,
+        userId: freelancer._id,
         type: 'contract',
-        title: `Contract Awarded — ${project.title}`,
-        body: `${req.user!.name} accepted your $${proposal.bidAmount.toLocaleString()} proposal and activated Contract #${String(contract._id).slice(-6)}.`,
-        link: `/dashboard`,
+        title: `Direct Contract Offer — ${project.title}`,
+        body: `${req.user!.name} selected your profile and offered you the contract for "${project.title}" ($${proposal.bidAmount.toLocaleString()}). Please review and accept or decline in your Contracts dashboard.`,
+        link: `/dashboard?tab=contracts`,
       });
 
-      res.json({ proposal, project: lockedProject, contract });
-    } catch (err) {
-      res.status(500).json({ error: 'Failed to update proposal status', details: String(err) });
+      res.status(201).json({
+        success: true,
+        message: `Successfully sent contract offer to ${freelancer.name}! Awaiting specialist review and acceptance.`,
+        contract,
+        project: lockedProject,
+        proposal,
+      });
+      return;
     }
+
+    // Branch 2: Direct Commission Sprint (instant custom contract)
+    const projectTitle = title?.trim() || `Custom Direct Sprint with ${freelancer.name}`;
+    const projectDesc =
+      description?.trim() ||
+      coverNote?.trim() ||
+      `Direct commission sprint initiated by ${req.user!.name}. Verified deliverables to be submitted upon sprint completion.`;
+    const finalAmount = agreedAmount || (freelancer.hourlyRate ? freelancer.hourlyRate * 20 : 1200);
+    const finalDays = estimatedDays || 14;
+
+    const newProject = await Project.create({
+      title: projectTitle,
+      summary: projectDesc.slice(0, 160),
+      description: projectDesc,
+      category: freelancer.title || 'Full-Stack Engineering',
+      requiredSkills:
+        freelancer.skills && freelancer.skills.length > 0
+          ? freelancer.skills.slice(0, 5)
+          : ['Full-Stack', 'Engineering'],
+      budgetMin: finalAmount,
+      budgetMax: finalAmount,
+      budgetType: 'fixed',
+      deadlineDays: finalDays,
+      experienceLevel: freelancer.experienceLevel || 'senior',
+      status: 'in_progress',
+      client: req.user!._id,
+      proposalCount: 1,
+      assignedFreelancerId: freelancer._id,
+    });
+
+    const proposal = await Proposal.create({
+      projectId: newProject._id,
+      freelancer: freelancer._id,
+      coverLetter:
+        coverNote || `Direct commission sprint established by client ${req.user!.name}.`,
+      bidAmount: finalAmount,
+      estimatedDays: finalDays,
+      milestones: [
+        {
+          title: `${projectTitle} Sprint Deliverable`,
+          amount: finalAmount,
+          dueDays: finalDays,
+          status: 'pending',
+        },
+      ],
+      status: 'accepted',
+      matchSnapshot: {
+        overallScore: 98,
+        skillOverlapScore: 40,
+        rateScore: 20,
+        seniorityScore: 15,
+        portfolioScore: 15,
+        reliabilityScore: 8,
+        explanation: 'Direct commission initiated with specialist.',
+      },
+    });
+
+    newProject.acceptedProposalId = proposal._id as any;
+    await newProject.save();
+
+    const contract = await Contract.create({
+      projectId: newProject._id,
+      proposalId: proposal._id,
+      client: req.user!._id,
+      freelancer: freelancer._id,
+      agreedAmount: finalAmount,
+      estimatedDays: finalDays,
+      status: 'pending_acceptance',
+      milestones: proposal.milestones,
+    });
+
+    await Notification.create({
+      userId: freelancer._id,
+      type: 'contract',
+      title: `Direct Commission Offer — ${projectTitle}`,
+      body: `${req.user!.name} offered you a direct commission sprint ($${finalAmount.toLocaleString()}). Please review and accept or decline in your Contracts dashboard.`,
+      link: `/dashboard?tab=contracts`,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `Successfully commissioned ${freelancer.name}! Contract offer sent and awaiting specialist acceptance.`,
+      contract,
+      project: newProject,
+      proposal,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to process direct hiring request' });
   }
-);
+});
 
 // --- 6. Contracts & Project Completion Lifecycle ---
 apiRouter.get('/contracts', requireAuth, async (req: AuthenticatedRequest, res) => {
@@ -1048,7 +1460,147 @@ apiRouter.get('/contracts', requireAuth, async (req: AuthenticatedRequest, res) 
 
     res.json({ contracts });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch contracts', details: String(err) });
+    res.status(500).json({ error: 'Failed to fetch contracts' });
+  }
+});
+
+apiRouter.post('/contracts/:id/accept', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const contract = await Contract.findById(req.params.id);
+    if (!contract) {
+      res.status(404).json({ error: 'Contract not found.' });
+      return;
+    }
+
+    if (req.user!.role !== 'admin' && String(contract.freelancer) !== String(req.user!._id)) {
+      res.status(403).json({
+        error: 'Forbidden: Only the assigned specialist can accept this contract offer.',
+      });
+      return;
+    }
+
+    if (contract.status !== 'pending_acceptance') {
+      res.status(400).json({
+        error: `Cannot accept contract with status '${contract.status}'.`,
+      });
+      return;
+    }
+
+    contract.status = 'active';
+    await contract.save();
+
+    await Project.findByIdAndUpdate(contract.projectId, {
+      $set: { status: 'in_progress' },
+    });
+
+    const project = await Project.findById(contract.projectId);
+
+    // Send notification to client that freelancer accepted
+    await Notification.create({
+      userId: contract.client,
+      type: 'contract',
+      title: `Contract Offer Accepted — ${project ? project.title : 'Sprint'}`,
+      body: `${req.user!.name} accepted your contract offer ($${contract.agreedAmount.toLocaleString()})! Work is now officially underway.`,
+      link: `/dashboard?tab=contracts`,
+    });
+
+    res.json({
+      success: true,
+      message: 'Contract accepted successfully! The sprint is now active.',
+      contract,
+      project,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to accept contract offer' });
+  }
+});
+
+apiRouter.post('/contracts/:id/reject', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const contract = await Contract.findById(req.params.id);
+    if (!contract) {
+      res.status(404).json({ error: 'Contract not found.' });
+      return;
+    }
+
+    const isFreelancer = String(contract.freelancer) === String(req.user!._id);
+    const isClient = String(contract.client) === String(req.user!._id);
+    const isAdmin = req.user!.role === 'admin';
+
+    if (!isFreelancer && !isClient && !isAdmin) {
+      res.status(403).json({
+        error: 'Forbidden: You are not authorized to decline or cancel this contract.',
+      });
+      return;
+    }
+
+    if (
+      contract.status === 'submitted' ||
+      contract.status === 'completed' ||
+      contract.status === 'cancelled'
+    ) {
+      res.status(400).json({
+        error: `Cannot decline or cancel contract in '${contract.status}' status. Use dispute resolution or revision flow instead.`,
+      });
+      return;
+    }
+
+    const { reason } = (req.body as { reason?: string }) || {};
+    const rejectionReason =
+      reason?.trim() ||
+      (isFreelancer
+        ? 'Specialist declined the contract offer.'
+        : 'Client cancelled the contract.');
+
+    contract.status = 'cancelled';
+    contract.rejectionReason = rejectionReason;
+    contract.cancelledAt = new Date();
+    await contract.save();
+
+    // Reopen project brief so client can hire another specialist or continue receiving proposals
+    const project = await Project.findByIdAndUpdate(
+      contract.projectId,
+      {
+        $set: { status: 'open' },
+        $unset: { acceptedProposalId: 1, assignedFreelancerId: 1 },
+      },
+      { new: true }
+    );
+
+    // If there was an associated proposal, update status to rejected
+    if (contract.proposalId) {
+      await Proposal.findByIdAndUpdate(contract.proposalId, {
+        $set: { status: 'rejected' },
+      });
+    }
+
+    // Send notification to the other party
+    const targetUserId = isFreelancer ? contract.client : contract.freelancer;
+    const notificationTitle = isFreelancer
+      ? `Contract Offer Declined — ${project ? project.title : 'Project'}`
+      : `Contract Cancelled — ${project ? project.title : 'Project'}`;
+    const notificationBody = isFreelancer
+      ? `${req.user!.name} declined your contract offer${reason ? `: "${reason}"` : ''}. Your project brief has been reopened for talent.`
+      : `${req.user!.name} cancelled the contract${reason ? `: "${reason}"` : ''}. Escrow funds released.`;
+
+    await Notification.create({
+      userId: targetUserId,
+      type: 'contract',
+      title: notificationTitle,
+      body: notificationBody,
+      link: `/dashboard?tab=contracts`,
+    });
+
+    res.json({
+      success: true,
+      message: isFreelancer
+        ? 'You have declined the contract. The client has been notified and the project brief reopened.'
+        : 'Contract cancelled successfully. Escrow funds refunded and project brief reopened.',
+      contract,
+      project,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to decline or cancel contract' });
   }
 });
 
@@ -1078,9 +1630,11 @@ apiRouter.post('/contracts/:id/submit', requireAuth, async (req: AuthenticatedRe
       return;
     }
 
-    if (contract.status !== 'active') {
+    if (contract.status === 'pending_acceptance') {
+      contract.status = 'active';
+    } else if (contract.status !== 'active' && contract.status !== 'in_revision') {
       res.status(409).json({
-        error: `Cannot submit deliverables when contract status is '${contract.status}'.`,
+        error: `Cannot submit deliverables when contract status is '${contract.status}'. Deliverables can only be submitted for active or in-revision contracts.`,
       });
       return;
     }
@@ -1106,41 +1660,63 @@ apiRouter.post('/contracts/:id/submit', requireAuth, async (req: AuthenticatedRe
 
     res.json({ contract });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to submit deliverables', details: String(err) });
+    res.status(500).json({ error: 'Failed to submit deliverables' });
   }
 });
 
 apiRouter.post('/contracts/:id/complete', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
-    const { rating = 5, comment = 'Exceptional execution and communication throughout the sprint.' } =
-      req.body as { rating?: number; comment?: string };
+    const { rating, comment } = req.body as { rating?: unknown; comment?: unknown };
 
-    const contract = await Contract.findById(req.params.id);
-    if (!contract) {
+    const parsedRating = Number(rating);
+    if (!Number.isInteger(parsedRating) || parsedRating < 1 || parsedRating > 5) {
+      res.status(400).json({ error: 'A valid rating between 1 and 5 stars is required.' });
+      return;
+    }
+
+    if (typeof comment !== 'string' || comment.trim().length < 10) {
+      res.status(400).json({ error: 'A verified review comment of at least 10 characters is required.' });
+      return;
+    }
+
+    const contractDoc = await Contract.findById(req.params.id);
+    if (!contractDoc) {
       res.status(404).json({ error: 'Contract not found.' });
       return;
     }
 
-    if (req.user!.role !== 'admin' && String(contract.client) !== String(req.user!._id)) {
+    if (req.user!.role !== 'admin' && String(contractDoc.client) !== String(req.user!._id)) {
       res.status(403).json({
         error: 'Forbidden: Only the contract client can approve completion and release funds.',
       });
       return;
     }
 
-    if (contract.status === 'completed') {
-      res.status(409).json({ error: 'Contract has already been completed.' });
+    // Atomic conditional transition: Only approve if status is currently 'submitted'
+    // This prevents double-counting if clicked twice concurrently
+    const contract = await Contract.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        status: 'submitted',
+        ...(req.user!.role === 'admin' ? {} : { client: req.user!._id }),
+      },
+      {
+        $set: {
+          status: 'completed',
+          completedAt: new Date(),
+          reviewSubmitted: true,
+          'milestones.$[].status': 'approved',
+        },
+      },
+      { new: true }
+    );
+
+    if (!contract) {
+      res.status(409).json({
+        error: 'Contract cannot be completed. Deliverables must be in "submitted" state before approval, or contract has already been finalized.',
+      });
       return;
     }
-
-    contract.status = 'completed';
-    contract.completedAt = new Date();
-    contract.reviewSubmitted = true;
-    contract.milestones = contract.milestones.map((m) => ({
-      ...m,
-      status: 'approved',
-    }));
-    await contract.save();
 
     const project = await Project.findByIdAndUpdate(
       contract.projectId,
@@ -1148,7 +1724,6 @@ apiRouter.post('/contracts/:id/complete', requireAuth, async (req: Authenticated
       { new: true }
     );
 
-    const safeRating = Math.min(5, Math.max(1, Number(rating) || 5));
     await Review.findOneAndUpdate(
       { contractId: contract._id },
       {
@@ -1156,39 +1731,182 @@ apiRouter.post('/contracts/:id/complete', requireAuth, async (req: Authenticated
         projectId: contract.projectId,
         client: contract.client,
         freelancer: contract.freelancer,
-        rating: safeRating,
-        comment: comment.trim() || 'Completed on schedule with high quality.',
+        rating: parsedRating,
+        comment: comment.trim(),
       },
       { upsert: true, new: true }
     );
 
-    // Recalculate freelancer's verified metrics
+    // Recalculate freelancer's verified metrics and completion rate
     const allReviews = await Review.find({ freelancer: contract.freelancer });
     const avgRating =
       allReviews.length > 0
         ? Number(
             (allReviews.reduce((acc, r) => acc + r.rating, 0) / allReviews.length).toFixed(2)
           )
-        : 5.0;
+        : parsedRating;
+
+    const totalContracts = await Contract.countDocuments({ freelancer: contract.freelancer });
+    const completedContracts = await Contract.countDocuments({
+      freelancer: contract.freelancer,
+      status: 'completed',
+    });
+    const completionRate =
+      totalContracts > 0 ? Math.round((completedContracts / totalContracts) * 100) : 100;
 
     await User.findByIdAndUpdate(contract.freelancer, {
       $inc: { completedProjects: 1 },
-      $set: { rating: avgRating, reviewCount: allReviews.length },
+      $set: { rating: avgRating, reviewCount: allReviews.length, completionRate },
     });
 
     await Notification.create({
       userId: contract.freelancer,
       type: 'contract',
-      title: `Contract Completed & Funds Released ($${contract.agreedAmount.toLocaleString()})`,
+      title: `Contract Completed & Escrow Released ($${contract.agreedAmount.toLocaleString()})`,
       body: `${req.user!.name} approved your deliverables for "${
         project?.title || 'Project'
-      }" and left a ${safeRating}★ review.`,
+      }" and left a ${parsedRating}★ verified review.`,
       link: `/dashboard`,
     });
 
     res.json({ contract, project });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to complete contract', details: String(err) });
+    res.status(500).json({ error: 'Failed to complete contract' });
+  }
+});
+
+apiRouter.post('/contracts/:id/request-revision', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { revisionNotes } = req.body as { revisionNotes?: string };
+    if (!revisionNotes || revisionNotes.trim().length < 10) {
+      res.status(400).json({
+        error: 'Please provide detailed revision notes of at least 10 characters.',
+      });
+      return;
+    }
+
+    const contractDoc = await Contract.findById(req.params.id);
+    if (!contractDoc) {
+      res.status(404).json({ error: 'Contract not found.' });
+      return;
+    }
+
+    if (req.user!.role !== 'admin' && String(contractDoc.client) !== String(req.user!._id)) {
+      res.status(403).json({
+        error: 'Forbidden: Only the contract client can request deliverables revisions.',
+      });
+      return;
+    }
+
+    const contract = await Contract.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        status: 'submitted',
+        ...(req.user!.role === 'admin' ? {} : { client: req.user!._id }),
+      },
+      {
+        $set: {
+          status: 'in_revision',
+          revisionNotes: revisionNotes.trim(),
+          'milestones.$[].status': 'pending',
+        },
+      },
+      { new: true }
+    );
+
+    if (!contract) {
+      res.status(409).json({
+        error: 'Cannot request revisions: contract must be in "submitted" state.',
+      });
+      return;
+    }
+
+    const project = await Project.findById(contract.projectId);
+    await Notification.create({
+      userId: contract.freelancer,
+      type: 'contract',
+      title: `Revision Requested — ${project?.title || 'Contract'}`,
+      body: `${req.user!.name} requested revisions on the submitted deliverables: "${revisionNotes.trim()}".`,
+      link: `/dashboard`,
+    });
+
+    res.json({ contract, message: 'Revision requested successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to request revision' });
+  }
+});
+
+apiRouter.post('/contracts/:id/dispute', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { disputeReason } = req.body as { disputeReason?: string };
+    if (!disputeReason || disputeReason.trim().length < 10) {
+      res.status(400).json({
+        error: 'Please provide a dispute justification of at least 10 characters.',
+      });
+      return;
+    }
+
+    const contractDoc = await Contract.findById(req.params.id);
+    if (!contractDoc) {
+      res.status(404).json({ error: 'Contract not found.' });
+      return;
+    }
+
+    const isClient = String(contractDoc.client) === String(req.user!._id);
+    const isFreelancer = String(contractDoc.freelancer) === String(req.user!._id);
+    const isAdmin = req.user!.role === 'admin';
+
+    if (!isClient && !isFreelancer && !isAdmin) {
+      res.status(403).json({
+        error: 'Forbidden: Only contract parties or administrators can file a dispute.',
+      });
+      return;
+    }
+
+    const contract = await Contract.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        status: { $in: ['active', 'submitted', 'in_revision'] },
+      },
+      {
+        $set: {
+          status: 'disputed',
+          disputeReason: disputeReason.trim(),
+        },
+      },
+      { new: true }
+    );
+
+    if (!contract) {
+      res.status(409).json({
+        error: 'Cannot dispute contract: contract is already completed, cancelled, or currently disputed.',
+      });
+      return;
+    }
+
+    // Auto-escalate to Trust & Safety Reports console
+    await Report.create({
+      reporter: req.user!._id,
+      targetType: 'project',
+      targetId: String(contract.projectId),
+      targetTitle: `Contract #${String(contract._id).slice(-6)} Escrow Dispute`,
+      reason: 'Escrow dispute raised by counterparty',
+      details: `Contract Dispute filed by ${req.user!.name} (${req.user!.role}): ${disputeReason.trim()}`,
+      status: 'open',
+    });
+
+    const notifyRecipient = isClient ? contract.freelancer : contract.client;
+    await Notification.create({
+      userId: notifyRecipient,
+      type: 'system',
+      title: `Contract Disputed — Escrow Locked`,
+      body: `${req.user!.name} opened a formal dispute on Contract #${String(contract._id).slice(-6)}. Trust & Safety moderation has been engaged.`,
+      link: `/dashboard`,
+    });
+
+    res.json({ contract, message: 'Dispute opened and escalated to Trust & Safety moderation.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to initiate dispute' });
   }
 });
 
@@ -1270,7 +1988,7 @@ apiRouter.get('/my/threads', requireAuth, async (req: AuthenticatedRequest, res)
 
     res.json({ threads });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch message threads', details: String(err) });
+    res.status(500).json({ error: 'Failed to fetch message threads' });
   }
 });
 
@@ -1298,9 +2016,15 @@ apiRouter.get('/messages/:projectId', requireAuth, async (req: AuthenticatedRequ
       .sort({ createdAt: 1 })
       .lean();
 
+    // Mark unread messages in this thread addressed to the active user as read
+    await Message.updateMany(
+      { projectId: access.project._id, recipient: req.user!._id, read: false },
+      { $set: { read: true } }
+    );
+
     res.json({ messages });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch messages', details: String(err) });
+    res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
 
@@ -1367,7 +2091,7 @@ apiRouter.post('/messages/:projectId', requireAuth, async (req: AuthenticatedReq
 
     res.status(201).json({ message: populated });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to send message', details: String(err) });
+    res.status(500).json({ error: 'Failed to send message' });
   }
 });
 
@@ -1380,7 +2104,7 @@ apiRouter.get('/notifications', requireAuth, async (req: AuthenticatedRequest, r
       .lean();
     res.json({ notifications });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch notifications', details: String(err) });
+    res.status(500).json({ error: 'Failed to fetch notifications' });
   }
 });
 
@@ -1393,7 +2117,7 @@ apiRouter.patch('/notifications/:id/read', requireAuth, async (req: Authenticate
     );
     res.json({ notification });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to mark notification read', details: String(err) });
+    res.status(500).json({ error: 'Failed to mark notification read' });
   }
 });
 
@@ -1402,7 +2126,7 @@ apiRouter.post('/notifications/read-all', requireAuth, async (req: Authenticated
     await Notification.updateMany({ userId: req.user!._id, read: false }, { $set: { read: true } });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to mark notifications read', details: String(err) });
+    res.status(500).json({ error: 'Failed to mark notifications read' });
   }
 });
 
@@ -1436,7 +2160,7 @@ apiRouter.post('/reports', requireAuth, async (req: AuthenticatedRequest, res) =
 
     res.status(201).json({ report });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to submit report', details: String(err) });
+    res.status(500).json({ error: 'Failed to submit report' });
   }
 });
 
@@ -1449,7 +2173,7 @@ apiRouter.get('/reports', requireAuth, async (req: AuthenticatedRequest, res) =>
       .lean();
     res.json({ reports });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch reports', details: String(err) });
+    res.status(500).json({ error: 'Failed to fetch reports' });
   }
 });
 
@@ -1491,7 +2215,7 @@ apiRouter.patch(
 
       res.json({ report });
     } catch (err) {
-      res.status(500).json({ error: 'Failed to update moderation report', details: String(err) });
+      res.status(500).json({ error: 'Failed to update moderation report' });
     }
   }
 );
